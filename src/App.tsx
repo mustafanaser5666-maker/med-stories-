@@ -25,7 +25,7 @@ import confetti from 'canvas-confetti';
 import { StorySlide, DoctorProfile, StoryIllustration } from './types/story';
 import { PRESET_TOPICS } from './data/presetTopics';
 import { DEFAULT_ILLUSTRATIONS, DOCTOR_MUSTAFA_AVATAR } from './data/cartoonLibrary';
-import { StoryCanvas } from './components/StoryCanvas';
+import { StoryCanvas, HeaderStyle } from './components/StoryCanvas';
 import { StoryEditor } from './components/StoryEditor';
 import { StoryGeneratorModal } from './components/StoryGeneratorModal';
 import { CartoonGeneratorModal } from './components/CartoonGeneratorModal';
@@ -57,12 +57,18 @@ export default function App() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isPlayerOpen, setIsPlayerOpen] = useState(false);
   const [showPresetsDropdown, setShowPresetsDropdown] = useState(false);
-  const [sharing, setSharing] = useState(false);
+  const [sharingSingle, setSharingSingle] = useState(false);
+  const [downloadingSingle, setDownloadingSingle] = useState(false);
+  const [sharingAll, setSharingAll] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [hideInstagramUI, setHideInstagramUI] = useState(true);
+  const [headerStyle, setHeaderStyle] = useState<HeaderStyle>('branded');
 
   // Canvas Reference for export
   const canvasRef = useRef<HTMLDivElement | null>(null);
+
+  // Hidden references for batch capturing all slides
+  const batchSlideRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -71,20 +77,22 @@ export default function App() {
     }, 4500);
   };
 
+  // 1. Share Single Slide to Instagram / Native Share
   const handleShareToInstagram = async () => {
-    if (!canvasRef.current) return;
-    setSharing(true);
-    showToast('جاري تحضير الستوري للنشر على إنستغرام...');
+    const el = canvasRef.current || batchSlideRefs.current[currentSlideIndex];
+    if (!el) return;
+    setSharingSingle(true);
+    showToast(`جاري تحضير السلايد ${currentSlideIndex + 1} للنشر على إنستغرام...`);
 
     try {
-      const dataUrl = await toPng(canvasRef.current, {
+      const dataUrl = await toPng(el, {
         pixelRatio: 2.5,
         quality: 0.98,
       });
 
       const res = await fetch(dataUrl);
       const blob = await res.blob();
-      const fileName = `dr_mustafa_story_${slides[currentSlideIndex]?.slideNumber || 1}.png`;
+      const fileName = `dr_mustafa_story_slide_${slides[currentSlideIndex]?.slideNumber || currentSlideIndex + 1}.png`;
       const file = new File([blob], fileName, { type: 'image/png' });
 
       // If device supports Web Share API with files (Android, iOS Safari, etc.)
@@ -97,18 +105,15 @@ export default function App() {
         showToast('تم فتح قائمة المشاركة بنجاح! اختر Instagram Stories 📲');
       } else {
         // Desktop / unsupported browsers fallback
-        // 1. Download image
         const link = document.createElement('a');
         link.download = fileName;
         link.href = dataUrl;
         link.click();
 
-        // 2. Copy caption
         try {
           await navigator.clipboard.writeText(caption || '');
         } catch (_) {}
 
-        // 3. Try to copy image to clipboard
         try {
           if (navigator.clipboard && (window as any).ClipboardItem) {
             await navigator.clipboard.write([
@@ -117,25 +122,167 @@ export default function App() {
           }
         } catch (_) {}
 
-        // 4. Open Instagram
         window.open('https://www.instagram.com/', '_blank');
-
         showToast('تم تحميل صورة الستوري ونسخ النص! تم فتح إنستغرام للنشر المباشر 📸✨');
       }
 
       confetti({
-        particleCount: 80,
-        spread: 70,
+        particleCount: 70,
+        spread: 60,
         origin: { y: 0.6 },
       });
     } catch (err: any) {
       if (err?.name !== 'AbortError') {
         console.error(err);
-        showToast('حدث خطأ أثناء المشاركة، جاري فتح نافذة التصدير');
-        setIsExportModalOpen(true);
+        showToast('حدث خطأ أثناء المشاركة، يمكنك تجربة التحميل كصورة');
       }
     } finally {
-      setSharing(false);
+      setSharingSingle(false);
+    }
+  };
+
+  // 2. Download Current Single Slide
+  const handleDownloadCurrentSlide = async () => {
+    const el = canvasRef.current || batchSlideRefs.current[currentSlideIndex];
+    if (!el) return;
+    setDownloadingSingle(true);
+    showToast('جاري تصدير صورة الستوري بدقة عالية...');
+
+    try {
+      const dataUrl = await toPng(el, {
+        pixelRatio: 2.5,
+        quality: 0.98,
+      });
+
+      const link = document.createElement('a');
+      link.download = `dr_mustafa_story_slide_${slides[currentSlideIndex]?.slideNumber || currentSlideIndex + 1}_${Date.now()}.png`;
+      link.href = dataUrl;
+      link.click();
+
+      confetti({
+        particleCount: 60,
+        spread: 60,
+        origin: { y: 0.7 },
+      });
+
+      showToast('تم تحميل الستوري بنجاح! جاهز للنشر على إنستغرام ✨');
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء تحميل السلايد');
+    } finally {
+      setDownloadingSingle(false);
+    }
+  };
+
+  // 3. Share All Slides at Once to Instagram (Request 10)
+  const handleShareAllSlides = async () => {
+    setSharingAll(true);
+    showToast(`جاري تجهيز جميع السلايدات (${slides.length}) للمشاركة...`);
+
+    try {
+      const files: File[] = [];
+
+      for (let i = 0; i < slides.length; i++) {
+        showToast(`جاري معالجة السلايد ${i + 1} من ${slides.length}...`);
+        const el = batchSlideRefs.current[i] || (i === currentSlideIndex ? canvasRef.current : null);
+        if (!el) continue;
+
+        const dataUrl = await toPng(el, {
+          pixelRatio: 2.5,
+          quality: 0.98,
+        });
+
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        const file = new File(
+          [blob],
+          `dr_mustafa_story_slide_${i + 1}_of_${slides.length}.png`,
+          { type: 'image/png' }
+        );
+        files.push(file);
+      }
+
+      if (files.length === 0) {
+        throw new Error('لم يتم العثور على سلايدات لتجهيزها');
+      }
+
+      // Check if multi-file sharing is supported (iOS Safari, Android Chrome Web Share API)
+      if (navigator.canShare && navigator.canShare({ files })) {
+        await navigator.share({
+          title: `سلسلة ستوريات طب الأطفال: ${topicTitle} - د. مصطفى الحسيني`,
+          text: caption || 'سلسلة ستوريات طب الأطفال - د. مصطفى الحسيني @dr.er11',
+          files,
+        });
+        showToast(`تم فتح قائمة المشاركة لجميع السلايدات (${files.length})! اختر إنستغرام 📲✨`);
+      } else {
+        // Fallback for desktop: download all files sequentially and open Instagram
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          const link = document.createElement('a');
+          link.download = f.name;
+          link.href = URL.createObjectURL(f);
+          link.click();
+          await new Promise((r) => setTimeout(r, 260));
+        }
+
+        try {
+          await navigator.clipboard.writeText(caption || '');
+        } catch (_) {}
+
+        window.open('https://www.instagram.com/', '_blank');
+        showToast(`تم تحميل جميع السلايدات (${files.length}) ونسخ الكابشن! تم فتح إنستغرام 📸`);
+      }
+
+      confetti({
+        particleCount: 120,
+        spread: 80,
+        origin: { y: 0.6 },
+      });
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error(err);
+        showToast('حدث خطأ أثناء معالجة السلسلة');
+      }
+    } finally {
+      setSharingAll(false);
+    }
+  };
+
+  // 4. Download All Slides sequentially as high-res PNG files
+  const handleDownloadAllSlides = async () => {
+    setDownloadingAll(true);
+    showToast(`جاري تحميل جميع السلايدات (${slides.length})...`);
+
+    try {
+      for (let i = 0; i < slides.length; i++) {
+        showToast(`جاري تحميل السلايد ${i + 1} من ${slides.length}...`);
+        const el = batchSlideRefs.current[i] || (i === currentSlideIndex ? canvasRef.current : null);
+        if (!el) continue;
+
+        const dataUrl = await toPng(el, {
+          pixelRatio: 2.5,
+          quality: 0.98,
+        });
+
+        const link = document.createElement('a');
+        link.download = `dr_mustafa_story_slide_${i + 1}_of_${slides.length}.png`;
+        link.href = dataUrl;
+        link.click();
+        await new Promise((r) => setTimeout(r, 260));
+      }
+
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 },
+      });
+
+      showToast(`تم تحميل جميع السلايدات (${slides.length}) بنجاح! 📥✨`);
+    } catch (err) {
+      console.error(err);
+      showToast('حدث خطأ أثناء تحميل السلايدات');
+    } finally {
+      setDownloadingAll(false);
     }
   };
 
@@ -321,28 +468,41 @@ export default function App() {
               <span className="hidden sm:inline">معاينة الستوري</span>
             </button>
 
-            {/* Direct Instagram Share Button */}
+            {/* Direct Instagram Batch Multi-Share Button */}
             <button
               type="button"
-              onClick={handleShareToInstagram}
-              disabled={sharing}
+              onClick={handleShareAllSlides}
+              disabled={sharingAll || sharingSingle}
               className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:opacity-95 text-white text-xs font-black flex items-center gap-1.5 shadow-lg shadow-rose-500/25 transition cursor-pointer disabled:opacity-50"
+              title="مشاركة جميع سلايدات الستوري دفعة واحدة على إنستغرام"
             >
-              {sharing ? (
+              {sharingAll ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <Share2 className="w-4 h-4" />
               )}
-              <span>مشاركة للإنستغرام 📱</span>
+              <span>نشر السلسلة كاملة ({slides.length}) 📚📲</span>
             </button>
 
-            {/* Export & Download */}
+            {/* Direct Single Slide Share Button */}
+            <button
+              type="button"
+              onClick={handleShareToInstagram}
+              disabled={sharingSingle || sharingAll}
+              className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50"
+              title="نشر السلايد الحالي فقط"
+            >
+              <Share2 className="w-4 h-4 text-pink-400" />
+              <span className="hidden sm:inline">السلايد الحالي</span>
+            </button>
+
+            {/* Export & Download Modal Trigger */}
             <button
               type="button"
               onClick={() => setIsExportModalOpen(true)}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition"
+              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold border border-slate-700 flex items-center gap-1.5 transition cursor-pointer"
             >
-              <Download className="w-4 h-4" />
+              <Download className="w-4 h-4 text-teal-400" />
               <span>خيارات التصدير</span>
             </button>
           </div>
@@ -354,37 +514,49 @@ export default function App() {
         {/* Left Column (Desktop 5 cols): Real 9:16 Instagram Canvas */}
         <div className="lg:col-span-5 flex flex-col items-center space-y-4">
           {/* Canvas Mode Control Header */}
-          <div className="flex items-center justify-between w-full max-w-[380px] px-1 text-xs font-bold text-slate-400 gap-2">
+          <div className="flex flex-col sm:flex-row items-center justify-between w-full max-w-[380px] px-1 text-xs font-bold text-slate-400 gap-2">
             <span className="flex items-center gap-1.5 text-slate-300">
               <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
               <span>سلايد {currentSlideIndex + 1} من {slides.length}</span>
             </span>
 
-            {/* Segmented Toggle: Clean Mode vs Mockup Mode */}
-            <div className="flex bg-slate-900/90 p-0.5 rounded-xl border border-slate-700/80 text-[11px] font-bold">
+            {/* 3-Way Header Style Toggle */}
+            <div className="flex bg-slate-900/95 p-1 rounded-xl border border-slate-700/80 text-[11px] font-bold">
               <button
                 type="button"
-                onClick={() => setHideInstagramUI(true)}
+                onClick={() => setHeaderStyle('branded')}
                 className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                  hideInstagramUI
+                  headerStyle === 'branded'
                     ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-xs font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
-                title="سلايد صافي وطبيعي للنشر مباشرة على إنستغرام بدون هيدر مكرر"
+                title="يظهر اسم د. مصطفى الحسيني والمعرف @dr.er11 والأفاتار في أعلى السلايد"
               >
-                سلايد صافي للنشر ✨
+                هوية الطبيب 🩺
               </button>
               <button
                 type="button"
-                onClick={() => setHideInstagramUI(false)}
+                onClick={() => setHeaderStyle('clean')}
                 className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                  !hideInstagramUI
+                  headerStyle === 'clean'
+                    ? 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-xs font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="سلايد صافي وطبيعي للنشر مباشرة بدون هيدر علوي"
+              >
+                صافي ✨
+              </button>
+              <button
+                type="button"
+                onClick={() => setHeaderStyle('instagram_mock')}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                  headerStyle === 'instagram_mock'
                     ? 'bg-purple-600 text-white shadow-xs font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
                 title="معاينة شكل الستوري داخل واجهة تطبيق إنستغرام"
               >
-                معاينة التطبيق 📱
+                واجهة إنستغرام 📱
               </button>
             </div>
           </div>
@@ -409,7 +581,7 @@ export default function App() {
               interactivePreview={false}
               canvasRef={canvasRef}
               onShare={handleShareToInstagram}
-              hideInstagramUI={hideInstagramUI}
+              headerStyle={headerStyle}
             />
           </div>
 
@@ -419,18 +591,18 @@ export default function App() {
               type="button"
               disabled={currentSlideIndex === 0}
               onClick={() => setCurrentSlideIndex((prev) => Math.max(0, prev - 1))}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 text-xs font-bold transition"
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 text-xs font-bold transition cursor-pointer"
             >
-              ← السلايد السابق
+              ← السابق
             </button>
             <div className="flex gap-1.5 px-2">
               {slides.map((_, idx) => (
                 <button
                   key={idx}
                   onClick={() => setCurrentSlideIndex(idx)}
-                  className={`w-6 h-6 rounded-lg text-[11px] font-bold transition ${
+                  className={`w-7 h-7 rounded-lg text-xs font-bold transition cursor-pointer ${
                     idx === currentSlideIndex
-                      ? 'bg-teal-500 text-white'
+                      ? 'bg-teal-500 text-white shadow-md'
                       : 'bg-slate-800 text-slate-400 hover:text-white'
                   }`}
                 >
@@ -442,40 +614,81 @@ export default function App() {
               type="button"
               disabled={currentSlideIndex === slides.length - 1}
               onClick={() => setCurrentSlideIndex((prev) => Math.min(slides.length - 1, prev + 1))}
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 text-xs font-bold transition"
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40 text-xs font-bold transition cursor-pointer"
             >
-              السلايد التالي →
+              التالي →
             </button>
           </div>
 
-          {/* Direct Instagram Share Bar */}
-          <div className="w-full max-w-[380px] flex gap-2 pt-1">
+          {/* Direct Multi-slide and Single-slide Action Bar */}
+          <div className="w-full max-w-[380px] space-y-2 pt-1">
+            {/* Primary Multi-Slide Share Button (Request 10) */}
             <button
               type="button"
-              onClick={handleShareToInstagram}
-              disabled={sharing}
-              className="flex-1 py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:opacity-95 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xl shadow-rose-500/20 transition cursor-pointer disabled:opacity-50"
+              onClick={handleShareAllSlides}
+              disabled={sharingAll || sharingSingle}
+              className="w-full py-3 px-4 rounded-2xl bg-gradient-to-r from-amber-500 via-rose-500 to-purple-600 hover:opacity-95 text-white text-xs font-black flex items-center justify-center gap-2 shadow-xl shadow-rose-500/25 transition cursor-pointer disabled:opacity-50"
             >
-              {sharing ? (
+              {sharingAll ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>جاري تحضير الستوري للنشر...</span>
+                  <span>جاري تجهيز ونشر جميع الستوريات ({slides.length})...</span>
                 </>
               ) : (
                 <>
                   <Share2 className="w-4 h-4" />
-                  <span>نشر هذا السلايد على إنستغرام ستوري 📲</span>
+                  <span>نشر السلسلة كاملة على إنستغرام ({slides.length} ستوريات) 📚📲</span>
                 </>
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => setIsExportModalOpen(true)}
-              className="p-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center cursor-pointer transition"
-              title="خيارات التصدير والحفظ"
-            >
-              <Download className="w-4 h-4" />
-            </button>
+
+            {/* Secondary actions: Current Slide + Download All + Single Download */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={handleShareToInstagram}
+                disabled={sharingSingle || sharingAll}
+                className="py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold border border-slate-700 flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center"
+                title="نشر السلايد الحالي فقط"
+              >
+                {sharingSingle ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Share2 className="w-3.5 h-3.5 text-pink-400" />
+                )}
+                <span>سلايد {currentSlideIndex + 1} 📲</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadAllSlides}
+                disabled={downloadingAll}
+                className="py-2.5 px-2 rounded-xl bg-teal-600/20 hover:bg-teal-600/30 text-teal-300 border border-teal-500/30 text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center"
+                title="تحميل جميع السلايدات كملفات PNG"
+              >
+                {downloadingAll ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                <span>تحميل الكل ({slides.length}) 📥</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadCurrentSlide}
+                disabled={downloadingSingle}
+                className="py-2.5 px-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-bold flex items-center justify-center gap-1 transition cursor-pointer disabled:opacity-50 text-center"
+                title="تحميل السلايد الحالي فقط كصورة PNG"
+              >
+                {downloadingSingle ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-teal-400" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-teal-400" />
+                )}
+                <span>تحميل سلايد {currentSlideIndex + 1}</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -495,6 +708,38 @@ export default function App() {
           />
         </div>
       </main>
+
+      {/* Hidden batch capture container for capturing all slides in sequence */}
+      <div
+        className="fixed pointer-events-none overflow-hidden"
+        style={{
+          position: 'fixed',
+          left: '-9999px',
+          top: '0',
+          width: '380px',
+          zIndex: -100,
+        }}
+        aria-hidden="true"
+      >
+        {slides.map((s, idx) => (
+          <div
+            key={s.id || idx}
+            ref={(el) => {
+              batchSlideRefs.current[idx] = el;
+            }}
+            className="w-[380px] mb-4"
+          >
+            <StoryCanvas
+              slide={s}
+              totalSlides={slides.length}
+              currentSlideIndex={idx}
+              doctorProfile={doctorProfile}
+              interactivePreview={false}
+              headerStyle={headerStyle}
+            />
+          </div>
+        ))}
+      </div>
 
       {/* Footer */}
       <footer className="mt-auto border-t border-slate-900 bg-slate-950/80 px-4 py-4 text-center text-xs text-slate-500">
@@ -532,9 +777,18 @@ export default function App() {
         doctorProfile={doctorProfile}
         caption={caption}
         topicTitle={topicTitle}
-        canvasRef={canvasRef}
+        headerStyle={headerStyle}
+        onChangeHeaderStyle={setHeaderStyle}
         onSelectSlide={setCurrentSlideIndex}
         onOpenPlayer={() => setIsPlayerOpen(true)}
+        onShareAll={handleShareAllSlides}
+        onDownloadAll={handleDownloadAllSlides}
+        onShareSingle={handleShareToInstagram}
+        onDownloadSingle={handleDownloadCurrentSlide}
+        isSharingAll={sharingAll}
+        isDownloadingAll={downloadingAll}
+        isSharingSingle={sharingSingle}
+        isDownloadingSingle={downloadingSingle}
       />
 
       <StoryPlayerModal

@@ -3,6 +3,8 @@ import { StorySlide, DoctorProfile } from '../types/story';
 import { COLOR_THEMES } from '../data/cartoonLibrary';
 import { CheckCircle2, AlertTriangle, Sparkles, Heart, Send, Check } from 'lucide-react';
 
+export type HeaderStyle = 'branded' | 'clean' | 'instagram_mock';
+
 interface StoryCanvasProps {
   slide: StorySlide;
   totalSlides: number;
@@ -14,6 +16,7 @@ interface StoryCanvasProps {
   canvasRef?: React.RefObject<HTMLDivElement | null>;
   onShare?: () => void;
   hideInstagramUI?: boolean;
+  headerStyle?: HeaderStyle;
 }
 
 export const StoryCanvas: React.FC<StoryCanvasProps> = ({
@@ -27,8 +30,15 @@ export const StoryCanvas: React.FC<StoryCanvasProps> = ({
   canvasRef,
   onShare,
   hideInstagramUI = true,
+  headerStyle,
 }) => {
   const theme = COLOR_THEMES[slide.colorTheme] || COLOR_THEMES.teal_mint;
+  // Determine effective header style
+  const effectiveHeaderStyle: HeaderStyle = headerStyle
+    ? headerStyle
+    : hideInstagramUI
+    ? 'branded'
+    : 'instagram_mock';
 
   return (
     <div className="relative flex justify-center items-center select-none w-full max-w-[380px] mx-auto">
@@ -50,8 +60,52 @@ export const StoryCanvas: React.FC<StoryCanvasProps> = ({
         </div>
 
         {/* Top Header */}
-        {hideInstagramUI ? (
-          /* Natural Clean Story Mode (No duplicate Instagram account at top right) */
+        {effectiveHeaderStyle === 'branded' ? (
+          /* Branded Doctor Header (Doctor name & handle @dr.er11 at top right, slide count at top left) */
+          <div className="relative z-20 pt-1 pb-1 flex items-center justify-between">
+            {/* Top Right (RTL): Doctor Profile & Handle */}
+            <div className="flex items-center gap-2">
+              <div className="relative p-0.5 rounded-full bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-xs">
+                <img
+                  src={doctorProfile.avatarUrl || '/images/cute_male_doctor_1792204272701.jpg'}
+                  alt={doctorProfile.name}
+                  referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    e.currentTarget.src = '/images/cute_male_doctor_1792204272701.jpg';
+                  }}
+                  className="w-7 h-7 rounded-full object-cover border border-black/30"
+                />
+              </div>
+              <div className="leading-tight text-right">
+                <div className="flex items-center gap-1">
+                  <span className="font-bold text-xs tracking-wide text-white drop-shadow-xs font-['Alexandria']">
+                    {doctorProfile.name}
+                  </span>
+                  {doctorProfile.verified && (
+                    <span className="inline-flex items-center justify-center w-3 h-3 bg-sky-500 text-white rounded-full text-[8px] font-bold">
+                      ✓
+                    </span>
+                  )}
+                </div>
+                <div className="text-[10px] text-teal-200/90 font-medium font-mono">
+                  {doctorProfile.handle}
+                </div>
+              </div>
+            </div>
+
+            {/* Top Left (RTL): Slide Count & Badge */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-white/90 bg-black/30 px-2 py-0.5 rounded-full backdrop-blur-xs border border-white/10">
+                {currentSlideIndex + 1} / {totalSlides}
+              </span>
+              <span className="text-[10px] font-semibold text-white/80 bg-white/15 px-2 py-0.5 rounded-full border border-white/10 hidden sm:inline-flex items-center gap-1">
+                <span>🩺</span>
+                <span>طب أطفال</span>
+              </span>
+            </div>
+          </div>
+        ) : effectiveHeaderStyle === 'clean' ? (
+          /* Clean Minimal Header */
           <div className="relative z-20 pt-1 pb-1 flex items-center justify-between">
             <span className="text-[10px] font-bold text-white/60 bg-black/20 px-2 py-0.5 rounded-full backdrop-blur-xs">
               {currentSlideIndex + 1} / {totalSlides}
@@ -308,21 +362,21 @@ export const StoryCanvas: React.FC<StoryCanvasProps> = ({
         </div>
 
         {/* Footer Note & Instagram Reply Bar */}
-        <div className="relative z-20 space-y-2 pt-2 border-t border-white/10">
+        <div className="relative z-20 space-y-1.5 pt-2 border-t border-white/10">
           {/* Reassurance Iraqi Pediatric Note */}
           <div className="text-center">
             <p className="text-[10px] text-white/90 font-medium tracking-wide">
               {slide.footerNote || 'عافيات على جهالنا 🤍 | استشيري طبيب طفلك'}
             </p>
-            {hideInstagramUI && (
+            {effectiveHeaderStyle !== 'branded' && (
               <p className="text-[9px] text-white/60 font-medium mt-0.5 tracking-wider">
                 {doctorProfile.name} • {doctorProfile.handle} 🩺
               </p>
             )}
           </div>
 
-          {/* Instagram Action Bar Mock (Only displayed in mockup view) */}
-          {!hideInstagramUI && (
+          {/* Instagram Action Bar Mock (Only displayed in instagram_mock view) */}
+          {effectiveHeaderStyle === 'instagram_mock' && (
             <div className="flex items-center gap-2 pt-1">
               <div className="flex-1 py-1.5 px-3 rounded-full bg-white/15 border border-white/20 text-white/60 text-[11px] flex items-center justify-between">
                 <span>إرسال رسالة...</span>
